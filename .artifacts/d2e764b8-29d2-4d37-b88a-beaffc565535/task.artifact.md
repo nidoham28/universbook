@@ -1,0 +1,8 @@
+- [x] Add `flutter_launcher_icons` to `pubspec.yaml`
+- [x] Update `flutter_launcher_icons.yaml` configuration
+- [x] Run `flutter pub get`
+- [x] Generate launcher icons
+- [x] Verify generated icons
+- [x] Move icon to `assets/icons/icons.png`
+- [x] Update `flutter_launcher_icons.yaml` to use `assets/icons/icons.png`
+- [x] Regenerate launcher icons

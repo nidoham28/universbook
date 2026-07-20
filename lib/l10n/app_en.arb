@@ -6,5 +6,7 @@
   "goToAbout": "Go to About",
   "aboutTitle": "About",
   "aboutMessage": "About Universbook",
-  "backToHome": "Back to Home"
+  "backToHome": "Back to Home",
+
+  "app_name": "Universbook"
 }

@@ -52,11 +52,13 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
-
-  # The following line ensures that the Material Icons font is
-  # included with your application, so that you can use the icons in
-  # the material Icons class.
+  generate: true
   uses-material-design: true
+  assets:
+    - lib/l10n/
+
+flutter_gen:
+  output: lib/generated/l10n
 
   # To add assets to your application, add an assets section, like this:
   # assets:

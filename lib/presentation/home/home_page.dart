@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:universbook/genarated/l10n/app_localizations.dart';
 
 import '../routes/app_routes.dart';
 
@@ -8,17 +9,19 @@ class HomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Universbook Home')),
+      appBar: AppBar(title: Text(l10n.homeTitle)),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('Welcome to Universbook'),
+            Text(l10n.welcomeMessage),
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () => context.go(AppRoutes.about),
-              child: const Text('Go to About'),
+              child: Text(l10n.goToAbout),
             ),
           ],
         ),

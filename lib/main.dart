@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:universbook/genarated/l10n/app_localizations.dart';
 import 'package:universbook/presentation/routes/app_routes.dart';
 
 void main() {
@@ -15,6 +16,13 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('en'),
+        Locale('bn'),
+      ],
       routerConfig: appRouter,
     );
   }

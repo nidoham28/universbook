@@ -1,0 +1,10 @@
+{
+  "@@locale": "en",
+  "appTitle": "Universbook",
+  "homeTitle": "Universbook Home",
+  "welcomeMessage": "Welcome to Universbook",
+  "goToAbout": "Go to About",
+  "aboutTitle": "About",
+  "aboutMessage": "About Universbook",
+  "backToHome": "Back to Home"
+}

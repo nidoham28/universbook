@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:universbook/core/config/supabase_config.dart';
 import 'package:universbook/core/theme/app_themes.dart';
 import 'package:universbook/core/theme/theme_controller.dart';
 import 'package:universbook/genarated/l10n/app_localizations.dart';
@@ -7,6 +9,11 @@ import 'package:universbook/presentation/routes/app_routes.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: SupabaseConfig.url,
+    anonKey: SupabaseConfig.anonKey,
+  );
 
   runApp(
     ChangeNotifierProvider(

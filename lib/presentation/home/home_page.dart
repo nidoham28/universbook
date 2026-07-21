@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:universbook/core/services/auth_service.dart';
 
 import '../routes/app_routes.dart';
 import 'widgets/feed_tab.dart';
 import 'widgets/subscribe_tab.dart';
 import 'widgets/library_tab.dart';
+import 'widgets/auth_bottom_sheet.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -15,9 +17,45 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
+  bool _isAuthenticated = AuthService.instance.currentSession != null;
+
+  @override
+  void initState() {
+    super.initState();
+    
+    // Listen to auth state changes
+    AuthService.instance.authStateChanges.listen((data) {
+      if (!mounted) return;
+      setState(() {
+        _isAuthenticated = data.session != null;
+      });
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_isAuthenticated && mounted) {
+        _openAuthSheet();
+      }
+    });
+  }
 
   void _onDestinationSelected(int index) {
     setState(() => _selectedIndex = index);
+  }
+
+  Future<void> _handleSignIn(String email, String password) async {
+    await AuthService.instance.signInWithEmail(email, password);
+  }
+
+  Future<void> _handleSignUp(String email, String password) async {
+    await AuthService.instance.signUpWithEmail(email, password);
+  }
+
+  void _openAuthSheet() {
+    showAuthBottomSheet(
+      context,
+      onSignIn: _handleSignIn,
+      onSignUp: _handleSignUp,
+    );
   }
 
   @override
@@ -30,13 +68,13 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text("Universbook"),
+        title: const Text("Universbook"),
         actions: [
           IconButton(
             icon: const Icon(Icons.search),
             tooltip: 'Search',
             onPressed: () => context.go(AppRoutes.search),
-          ),
+          )
         ],
       ),
       body: IndexedStack(

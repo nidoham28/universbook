@@ -27,4 +27,17 @@ class AuthService {
   Future<void> signOut() async {
     await _supabase.auth.signOut();
   }
+
+  /// Fetches the public.profiles row for the current user.
+  /// Returns null if there's no signed-in user or no matching row.
+  Future<Map<String, dynamic>?> fetchCurrentProfile() async {
+    final user = currentUser;
+    if (user == null) return null;
+
+    return _supabase
+        .from('profiles')
+        .select('username, display_name, avatar_url')
+        .eq('id', user.id)
+        .maybeSingle();
+  }
 }

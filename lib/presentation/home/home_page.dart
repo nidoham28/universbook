@@ -7,6 +7,7 @@ import 'widgets/feed_tab.dart';
 import 'widgets/subscribe_tab.dart';
 import 'widgets/library_tab.dart';
 import 'widgets/auth_bottom_sheet.dart';
+import 'widgets/app_drawer.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -22,7 +23,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    
+
     // Listen to auth state changes
     AuthService.instance.authStateChanges.listen((data) {
       if (!mounted) return;
@@ -58,6 +59,14 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<void> _handleSignOut() async {
+    await AuthService.instance.signOut();
+  }
+
+  void _navigateTo(String location) {
+    context.go(location);
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [
@@ -76,6 +85,13 @@ class _HomePageState extends State<HomePage> {
             onPressed: () => context.go(AppRoutes.search),
           )
         ],
+      ),
+      drawer: AppDrawer(
+        isAuthenticated: _isAuthenticated,
+        onSelectTab: _onDestinationSelected,
+        onNavigate: _navigateTo,
+        onOpenAuthSheet: _openAuthSheet,
+        onSignOut: _handleSignOut,
       ),
       body: IndexedStack(
         index: _selectedIndex,

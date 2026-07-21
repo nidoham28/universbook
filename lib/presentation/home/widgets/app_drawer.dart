@@ -24,12 +24,11 @@ extension ProfileDisplayName on ProfileModel {
   /// Returns the best name to show in UI.
   /// Priority: display_name (if not default) → username → fallback.
   String get uiDisplayName {
-    const defaultName = 'New user';
-    if (displayName != defaultName && displayName.trim().isNotEmpty) {
+    if (displayName.trim().isNotEmpty) {
       return displayName.trim();
+    } else {
+      return username.trim();
     }
-    if (username.trim().isNotEmpty) return username.trim();
-    return displayName.trim().isNotEmpty ? displayName.trim() : 'User';
   }
 
   /// Single-letter uppercase initial for avatar placeholder.
@@ -150,37 +149,11 @@ class _AppDrawerState extends State<AppDrawer> {
                 },
               ),
 
-            // ---- Nav items ---------------------------------------------
-            _NavItem(
-              icon: Icons.dynamic_feed_outlined,
-              label: 'Feed',
-              onTap: () => _selectTab(0),
-            ),
-            _NavItem(
-              icon: Icons.subscriptions_outlined,
-              label: 'Subscribe',
-              onTap: () => _selectTab(1),
-            ),
-            _NavItem(
-              icon: Icons.video_library_outlined,
-              label: 'Library',
-              onTap: () => _selectTab(2),
-            ),
-
             const Divider(height: 1),
 
             // ---- Authenticated-only links ------------------------------
             if (widget.isAuthenticated) ...[
-              _NavItem(
-                icon: Icons.person_outline,
-                label: 'Profile',
-                onTap: () => _navigate(AppRoutes.about),
-              ),
-              _NavItem(
-                icon: Icons.settings_outlined,
-                label: 'Settings',
-                onTap: () => _navigate(AppRoutes.about),
-              ),
+              // TODO
             ],
 
             const Spacer(),

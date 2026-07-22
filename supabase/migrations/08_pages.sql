@@ -19,7 +19,8 @@ create table if not exists public.pages (
   content_length int         not null default 0,
   page_no        int         not null,
   related_pages  uuid[]      not null default '{}'::uuid[],
-  search_queue   text[]      not null default '{}'::text[]
+  search_queue   text[]      not null default '{}'::text[],
+  category       text[]      not null default '{}'::text[]
 );
 
 -- ============================================================
@@ -67,7 +68,8 @@ alter table public.pages
   add column if not exists content_length int default 0,
   add column if not exists page_no        int,
   add column if not exists related_pages  uuid[] default '{}'::uuid[],
-  add column if not exists search_queue   text[] default '{}'::text[];
+  add column if not exists search_queue   text[] default '{}'::text[],
+  add column if not exists category       text[] default '{}'::text[];
 
 do $$
 begin
@@ -85,6 +87,7 @@ begin
   alter table public.pages alter column page_no        set not null;
   alter table public.pages alter column related_pages  set not null;
   alter table public.pages alter column search_queue   set not null;
+  alter table public.pages alter column category       set not null;
   if not exists (select 1 from public.pages where story_id is null) then
     alter table public.pages alter column story_id set not null;
   end if;
@@ -118,6 +121,7 @@ create index if not exists idx_pages_story_id on public.pages (story_id);
 create index if not exists idx_pages_creator  on public.pages (creator);
 create index if not exists idx_pages_status   on public.pages (status);
 create index if not exists idx_pages_search_queue on public.pages using gin (search_queue);
+create index if not exists idx_pages_category on public.pages using gin (category);
 
 create or replace function public.set_updated_at()
 returns trigger as $$

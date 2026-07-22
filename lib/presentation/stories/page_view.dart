@@ -2,35 +2,38 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../../repositories/story_repository.dart'; // ← was stories_service.dart
+import '../../models/page_model.dart';
+import '../../repositories/page_repository.dart';
 import '../routes/app_routes.dart';
 
-/// Reader/manager screen shown right after a story is published (and
-/// reusable for opening any story later). Takes the story's id, loads its
-/// record, and lists its pages. Tapping a page opens it for editing; the
-/// floating "Add page" button creates a new one.
+/// Reader screen for a single page, opened from the feed. Shows a cover
+/// banner (the page's own thumbnail + title), then the page's content and
+/// its search_queue tags below. This is a single-page "story view" — it
+/// does NOT list sibling pages from the same story; there is no
+/// channel/playlist behavior here. Tapping "Edit" opens that same page
+/// in the editor.
 ///
-/// Route: GoRoute(path: '/pageView/:storyId', ...) — see AppRoutes.pageView.
+/// Route: GoRoute(path: '/pageView/:pageId', ...) — see AppRoutes.pageView.
+/// `pageId` is a `pages.id` row id (see FeedTab's onTap), not a story id.
 class PageViewScreen extends StatefulWidget {
   const PageViewScreen({
     super.key,
-    required this.storyId,
-    StoryRepository? storyRepository, // ← was StoriesService? storiesService
-  }) : _storyRepository = storyRepository;
+    required this.pageId,
+    PageRepository? pageRepository,
+  }) : _pageRepository = pageRepository;
 
-  final String storyId;
-  final StoryRepository? _storyRepository; // ← was StoriesService?
+  final String pageId;
+  final PageRepository? _pageRepository;
 
   @override
   State<PageViewScreen> createState() => _PageViewScreenState();
 }
 
 class _PageViewScreenState extends State<PageViewScreen> {
-  // ↓ was: widget._storiesService ?? StoriesService()
-  late final StoryRepository _storyRepository =
-      widget._storyRepository ?? StoryRepository();
+  late final PageRepository _pageRepository =
+      widget._pageRepository ?? PageRepository();
 
-  Map<String, dynamic>? _story;
+  PageModel? _page;
   bool _isLoading = true;
   String? _errorMessage;
 
@@ -40,173 +43,257 @@ class _PageViewScreenState extends State<PageViewScreen> {
   Color get _textSecondary =>
       _isDark ? AppColors.textSecondaryDark : AppColors.textSecondaryLight;
 
+  static const List<Color> _tagPalette = [
+    Color(0xFFFF6B9D),
+    Color(0xFF4D96FF),
+    Color(0xFF3DD9B3),
+    Color(0xFFFFB84D),
+    Color(0xFFB16CEA),
+    Color(0xFF6BCB77),
+  ];
+
+  Color _tagColor(int i) => _tagPalette[i % _tagPalette.length];
+
+  Color _darken(Color color, [double amount = 0.35]) {
+    final hsl = HSLColor.fromColor(color);
+    return hsl
+        .withLightness((hsl.lightness - amount).clamp(0.0, 1.0))
+        .toColor();
+  }
+
   @override
   void initState() {
     super.initState();
-    _loadStory();
+    _loadPage();
   }
 
-  Future<void> _loadStory() async {
+  Future<void> _loadPage() async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
     try {
-      // ↓ was: _storiesService.fetchStoryById(...)
-      final story = await _storyRepository.fetchStoryById(widget.storyId);
+      // widget.pageId identifies a single page row — fetch that page only,
+      // not the full set of pages belonging to its parent story.
+      final page = await _pageRepository.fetchPageById(widget.pageId);
       if (!mounted) return;
       setState(() {
-        _story = story;
+        _page = page;
         _isLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'Could not load this story: $e';
+        _errorMessage = 'Could not load this page: $e';
         _isLoading = false;
       });
     }
   }
 
-  /// Opens edit_page.dart for an existing page (index provided) or for a
-  /// brand-new page (index omitted). Reloads the story on return so the
-  /// list picks up any changes (new page added, page_count changed, etc).
-  Future<void> _openEditPage({int? pageIndex}) async {
+  Future<void> _openEditPage() async {
+    final page = _page;
+    if (page == null) return;
     await context.push(
-      AppRoutes.editPagePath(widget.storyId, pageIndex: pageIndex),
+      AppRoutes.editPagePath(page.storyId, pageIndex: page.pageNo),
     );
     if (!mounted) return;
-    _loadStory();
+    _loadPage();
   }
 
   @override
   Widget build(BuildContext context) {
+    final page = _page;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_story?['title'] as String? ?? 'Story'),
-        centerTitle: true,
-      ),
-      body: _buildBody(),
-      floatingActionButton: _isLoading || _errorMessage != null
+      floatingActionButton: page == null
           ? null
           : FloatingActionButton.extended(
-        onPressed: () => _openEditPage(),
-        icon: const Icon(Icons.add),
-        label: const Text('Add page'),
+        onPressed: _openEditPage,
+        icon: const Icon(Icons.edit_outlined),
+        label: const Text('Edit'),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _errorMessage != null || page == null
+          ? _buildError()
+          : RefreshIndicator(
+        onRefresh: _loadPage,
+        child: CustomScrollView(
+          slivers: [
+            _buildHeaderSliver(page),
+            _buildContentSliver(page),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildBody() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_errorMessage != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.error_outline, size: 48, color: AppColors.error),
-              const SizedBox(height: 12),
-              Text(
-                _errorMessage!,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _textSecondary),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: _loadStory,
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 48, color: AppColors.error),
+            const SizedBox(height: 12),
+            Text(
+              _errorMessage ?? 'Page not found',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _textSecondary),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(onPressed: _loadPage, child: const Text('Retry')),
+          ],
         ),
-      );
-    }
-
-    final story = _story!;
-    final thumbnail = story['thumbnail'] as String?;
-    final pageCount = (story['page_count'] as num?)?.toInt() ?? 0;
-
-    if (pageCount == 0) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.menu_book_outlined, size: 48, color: _textSecondary),
-              const SizedBox(height: 12),
-              Text(
-                'No pages yet. Tap "Add page" to create the first one.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _textSecondary),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: pageCount,
-      separatorBuilder: (context, index) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        return _PageListTile(
-          index: index,
-          thumbnail: index == 0 ? thumbnail : null,
-          textPrimary: _textPrimary,
-          textSecondary: _textSecondary,
-          onTap: () => _openEditPage(pageIndex: index),
-        );
-      },
+      ),
     );
   }
-}
 
-class _PageListTile extends StatelessWidget {
-  const _PageListTile({
-    required this.index,
-    required this.thumbnail,
-    required this.textPrimary,
-    required this.textSecondary,
-    required this.onTap,
-  });
+  Widget _buildHeaderSliver(PageModel page) {
+    final thumbnail = page.thumbnail;
 
-  final int index;
-  final String? thumbnail;
-  final Color textPrimary;
-  final Color textSecondary;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        onTap: onTap,
-        leading: SizedBox(
-          width: 48,
-          height: 48,
-          child: thumbnail != null && thumbnail!.isNotEmpty
-              ? Image.network(
-            thumbnail!,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => Icon(
-              Icons.image_not_supported_outlined,
-              color: textSecondary,
+    return SliverAppBar(
+      pinned: true,
+      stretch: true,
+      expandedHeight: 220,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () => context.pop(),
+      ),
+      flexibleSpace: FlexibleSpaceBar(
+        stretchModes: const [StretchMode.zoomBackground],
+        background: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (thumbnail != null && thumbnail.isNotEmpty)
+              Image.network(
+                thumbnail,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  color:
+                  _isDark ? Colors.grey.shade900 : Colors.grey.shade200,
+                ),
+              )
+            else
+              Container(
+                color: _isDark ? Colors.grey.shade900 : Colors.grey.shade200,
+                child: Icon(Icons.menu_book_outlined,
+                    size: 56, color: _textSecondary),
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.05),
+                    Colors.black.withOpacity(0.65),
+                  ],
+                ),
+              ),
             ),
-          )
-              : Icon(Icons.description_outlined, color: textSecondary),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'PAGE ${page.pageNo + 1}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    page.title.isNotEmpty ? page.title : 'Untitled page',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      height: 1.15,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        title: Text(
-          'Page ${index + 1}',
-          style: TextStyle(color: textPrimary, fontWeight: FontWeight.w600),
-        ),
-        trailing: Icon(Icons.chevron_right, color: textSecondary),
+      ),
+    );
+  }
+
+  Widget _buildContentSliver(PageModel page) {
+    final tags = page.searchQueue.take(6).toList();
+
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 96),
+      sliver: SliverList(
+        delegate: SliverChildListDelegate([
+          if (page.content.trim().isNotEmpty)
+            Text(
+              page.content.trim(),
+              style: TextStyle(
+                color: _textPrimary,
+                fontSize: 15.5,
+                height: 1.55,
+              ),
+            )
+          else
+            Text(
+              'This page has no content yet.',
+              style: TextStyle(color: _textSecondary),
+            ),
+          if (tags.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (var i = 0; i < tags.length; i++)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color:
+                      _tagColor(i).withOpacity(_isDark ? 0.22 : 0.14),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: _tagColor(i).withOpacity(0.4),
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      tags[i],
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _isDark
+                            ? _tagColor(i).withOpacity(0.95)
+                            : _darken(_tagColor(i)),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ]),
       ),
     );
   }

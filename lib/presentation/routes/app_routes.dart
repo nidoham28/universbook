@@ -1,4 +1,5 @@
 import 'package:go_router/go_router.dart';
+import 'package:universbook/presentation/stories/page_list.dart';
 import 'package:universbook/presentation/stories/stories_page.dart';
 import 'package:universbook/presentation/stories/upload_stories.dart';
 
@@ -16,10 +17,12 @@ class AppRoutes {
   static const uploadStory = '/uploadStory';
   static const myStories = '/myStories';
   static const settings = '/settings';
+  static const pageListView = '/pageListView';
   static const pageView = '/pageView';
   static const editPage = '/editPage';
 
   static String pageViewPath(String storyId) => '$pageView/$storyId';
+  static String pageListPath(String storyId) => '$pageListView/$storyId';
 
   /// pageIndex omitted (or null) means "create a new page"; otherwise it's
   /// the index of the existing page to edit.
@@ -62,11 +65,19 @@ final appRouter = GoRouter(
       builder: (context, state) => const AboutPage(),
     ),
     GoRoute(
-      path: '${AppRoutes.pageView}/:storyId',
+      path: '${AppRoutes.pageListView}/:storyId',
       builder: (context, state) {
         final storyId = state.pathParameters['storyId']!;
         // PageViewScreen with no repo arg → internally uses StoryRepository()
-        return PageViewScreen(storyId: storyId);
+        return PageListScreen(storyId: storyId);
+      },
+    ),
+    GoRoute(
+      path: '${AppRoutes.pageView}/:pageId',
+      builder: (context, state) {
+        final pageId = state.pathParameters['pageId']!;
+        // PageViewScreen with no repo arg → internally uses StoryRepository()
+        return PageViewScreen(pageId: pageId);
       },
     ),
     GoRoute(

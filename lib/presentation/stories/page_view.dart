@@ -19,8 +19,8 @@ class PageViewScreen extends StatefulWidget {
   const PageViewScreen({
     super.key,
     required this.pageId,
-    PageRepository? pageRepository,
-  }) : _pageRepository = pageRepository;
+    this._pageRepository,
+  });
 
   final String pageId;
   final PageRepository? _pageRepository;

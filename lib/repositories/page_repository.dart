@@ -1,21 +1,11 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:typed_data';
 
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
+import '../models/page_model.dart';
 import 'story_repository.dart';
 
-/// Handles page management for the editor/reader screens. Page rows (in
-/// `story_pages`) are plain, RLS-protected table access.
-///
-/// NOTE: this table doesn't exist yet in the schema you shared — create
-/// it (with RLS mirroring `stories`: readable if the parent story is
-/// public or the caller is its creator, writable only by the creator)
-/// with roughly:
-///   id          uuid primary key default gen_random_uuid()
-///   story_id    uuid references stories(id) on delete cascade
-///   page_index  int not null
-///   content     text not null default ''
-///   image_url   text
-///   created_at  timestamptz default now()
-///   unique (story_id, page_index)
+/// Handles page management for the editor/reader screens.
 class PageRepository {
   PageRepository({SupabaseClient? client, StoryRepository? storyRepository})
       : _client = client ?? Supabase.instance.client,
@@ -24,92 +14,234 @@ class PageRepository {
   final SupabaseClient _client;
   final StoryRepository _storyRepository;
 
-  static const String _pagesTable = 'story_pages';
+  static const String _pagesTable = 'pages';
+  static const String _bucket = 'page-thumbnails';
+  static const String _publishFn = 'create-page';
+  static final Uuid _uuid = Uuid();
 
-  /// Fetches a single page by its position within the story, for the
-  /// edit-page screen.
-  Future<Map<String, dynamic>> fetchPage(String storyId, int pageIndex) async {
+  String get _userId {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) throw const AuthException('Not signed in');
+    return uid;
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // READ
+  // ─────────────────────────────────────────────────────────
+
+  Future<PageModel> fetchPageById(String id) async {
+    final data = await _client
+        .from(_pagesTable)
+        .select()
+        .eq('id', id)
+        .single();
+    return PageModel.fromJson(data);
+  }
+
+  Future<PageModel> fetchPage(String storyId, int pageIndex) async {
     final data = await _client
         .from(_pagesTable)
         .select()
         .eq('story_id', storyId)
-        .eq('page_index', pageIndex)
+        .eq('page_no', pageIndex)
         .single();
-    return Map<String, dynamic>.from(data);
+    return PageModel.fromJson(data);
   }
 
-  /// Appends a new page after the story's current last page, then bumps
-  /// `stories.page_count` to match. Not wrapped in a DB transaction (the
-  /// supabase-flutter client doesn't expose one) — if you see partial
-  /// failures under concurrent edits, move this pair into an Edge
-  /// Function like `create-story`.
-  Future<void> addPage(
-      String storyId, {
-        required String content,
-        String? imageUrl,
-      }) async {
+  Future<List<PageModel>> fetchPages(String storyId) async {
+    final data = await _client
+        .from(_pagesTable)
+        .select()
+        .eq('story_id', storyId)
+        .order('page_no', ascending: true);
+    return (data as List).map((e) => PageModel.fromJson(e)).toList();
+  }
+
+  /// Returns the next available page number (= current page_count), for
+  /// display only (e.g. "Page 6"). Don't feed this into addPage/publishPage
+  /// — both assign page_no server-side precisely to avoid the race this
+  /// value is subject to.
+  Future<int> nextPageNo(String storyId) async {
     final story = await _storyRepository.fetchStoryById(storyId);
-    final nextIndex = (story['page_count'] as num?)?.toInt() ?? 0;
-
-    await _client.from(_pagesTable).insert({
-      'story_id': storyId,
-      'page_index': nextIndex,
-      'content': content,
-      'image_url': imageUrl,
-    });
-
-    await _client
-        .from('stories')
-        .update({'page_count': nextIndex + 1})
-        .eq('id', storyId);
+    return (story['page_count'] as num?)?.toInt() ?? 0;
   }
 
-  /// Overwrites an existing page's content/image.
-  Future<void> updatePage(
-      String storyId,
-      int pageIndex, {
-        required String content,
-        String? imageUrl,
+  // ─────────────────────────────────────────────────────────
+  // IMAGE UPLOAD
+  // ─────────────────────────────────────────────────────────
+
+  Future<String> uploadThumbnailBytes(
+      Uint8List bytes, {
+        String fileExtension = 'jpg',
       }) async {
-    await _client
-        .from(_pagesTable)
-        .update({
-      'content': content,
-      'image_url': imageUrl,
-    })
-        .eq('story_id', storyId)
-        .eq('page_index', pageIndex);
+    final path = '$_userId/${_uuid.v4()}.$fileExtension';
+
+    await _client.storage.from(_bucket).uploadBinary(
+      path,
+      bytes,
+      fileOptions: FileOptions(
+        cacheControl: '3600',
+        upsert: false,
+        contentType: 'image/$fileExtension',
+      ),
+    );
+
+    return _client.storage.from(_bucket).getPublicUrl(path);
   }
 
-  /// Deletes a page and shifts every later page's `page_index` down by one
-  /// so indices stay contiguous, then decrements `stories.page_count`.
-  Future<void> deletePage(String storyId, int pageIndex) async {
-    await _client
-        .from(_pagesTable)
-        .delete()
-        .eq('story_id', storyId)
-        .eq('page_index', pageIndex);
+  Future<void> deleteThumbnail(String publicUrl) async {
+    try {
+      final segments = Uri.parse(publicUrl).pathSegments;
+      final i = segments.indexOf(_bucket);
+      if (i == -1 || i + 1 >= segments.length) return;
+      await _client.storage
+          .from(_bucket)
+          .remove([segments.sublist(i + 1).join('/')]);
+    } catch (_) {}
+  }
 
-    final laterPages = await _client
-        .from(_pagesTable)
-        .select('id, page_index')
-        .eq('story_id', storyId)
-        .gt('page_index', pageIndex)
-        .order('page_index', ascending: true);
+  // ─────────────────────────────────────────────────────────
+  // WRITES (drafts / private pages — no Edge Function round trip)
+  // ─────────────────────────────────────────────────────────
 
-    for (final row in (laterPages as List)) {
-      final map = Map<String, dynamic>.from(row as Map);
-      await _client
-          .from(_pagesTable)
-          .update({'page_index': (map['page_index'] as num).toInt() - 1})
-          .eq('id', map['id']);
+  /// Creates a draft/private page. `pages` has no client-writable INSERT
+  /// policy — this goes through the `add_page` RPC instead, which locks
+  /// the parent story row before assigning page_no (so it can't race a
+  /// concurrent add_page/publishPage call) and checks story ownership
+  /// itself. Use [publishPage] for a page that should be indexed for
+  /// search immediately.
+  Future<PageModel> addPage({
+    required String storyId,
+    required String title,
+    required String content,
+    String? thumbnail,
+    List<String> relatedPages = const [],
+    String status = 'draft',
+  }) async {
+    final data = await _client.rpc('add_page', params: {
+      'p_story_id': storyId,
+      'p_title': title.trim(),
+      'p_content': content.trim(),
+      'p_thumbnail': thumbnail,
+      'p_related_pages': relatedPages,
+      'p_status': status,
+    });
+    return PageModel.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  /// Updates a draft/private page in place. `pages` has no client-writable
+  /// UPDATE policy — this goes through the `update_page` RPC, which checks
+  /// ownership itself. Pass [status] only when you want to change it;
+  /// omitting it leaves the page's current status untouched.
+  Future<PageModel> updatePage({
+    required String pageId,
+    required String title,
+    required String content,
+    String? thumbnail,
+    List<String> relatedPages = const [],
+    String? status,
+  }) async {
+    final data = await _client.rpc('update_page', params: {
+      'p_page_id': pageId,
+      'p_title': title.trim(),
+      'p_content': content.trim(),
+      'p_thumbnail': thumbnail,
+      'p_related_pages': relatedPages,
+      'p_status': status,
+    });
+    return PageModel.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // PUBLISH (via Edge Function)
+  // ─────────────────────────────────────────────────────────
+
+  /// Creates a new public page. page_no is always assigned server-side
+  /// (never pass one in) — that's what makes concurrent publishes safe.
+  Future<Map<String, dynamic>> publishPage({
+    required String storyId,
+    required String title,
+    required String content,
+    String? thumbnail,
+    List<String> relatedPages = const [],
+  }) async {
+    final res = await _client.functions.invoke(
+      _publishFn,
+      body: {
+        'story_id': storyId, // matches Edge Function + DB column
+        'title': title.trim(),
+        'content': content.trim(),
+        if (thumbnail != null) 'thumbnail': thumbnail,
+        'related_pages': relatedPages,
+        'status': 'public',
+      },
+    );
+
+    if (res.status != 200 && res.status != 201) {
+      final err =
+          (res.data is Map ? res.data['error'] : null) ?? res.data.toString();
+      throw Exception('publishPage failed (${res.status}): $err');
     }
 
-    final story = await _storyRepository.fetchStoryById(storyId);
-    final currentCount = (story['page_count'] as num?)?.toInt() ?? 1;
-    await _client
-        .from('stories')
-        .update({'page_count': currentCount > 0 ? currentCount - 1 : 0})
-        .eq('id', storyId);
+    final data = res.data;
+    if (data is Map && data['data'] is Map) {
+      return Map<String, dynamic>.from(data['data'] as Map);
+    }
+    return <String, dynamic>{};
+  }
+
+  /// Updates an existing public page identified by [pageId].
+  /// Fetches the page first to resolve story_id + page_no, then delegates
+  /// to the Edge Function (which owns the search-queue rebuild, etc.).
+  Future<Map<String, dynamic>> updateAndPublishPage({
+    required String pageId,
+    required String title,
+    required String content,
+    String? thumbnail,
+    List<String> relatedPages = const [],
+  }) async {
+    final page = await fetchPageById(pageId);
+
+    final res = await _client.functions.invoke(
+      _publishFn,
+      body: {
+        'story_id': page.storyId, // matches Edge Function + DB column
+        'page_no': page.pageNo,
+        'title': title.trim(),
+        'content': content.trim(),
+        if (thumbnail != null) 'thumbnail': thumbnail,
+        'related_pages': relatedPages,
+        'status': 'public',
+      },
+    );
+
+    if (res.status != 200 && res.status != 201) {
+      final err =
+          (res.data is Map ? res.data['error'] : null) ?? res.data.toString();
+      throw Exception('updateAndPublishPage failed (${res.status}): $err');
+    }
+
+    final data = res.data;
+    if (data is Map && data['data'] is Map) {
+      return Map<String, dynamic>.from(data['data'] as Map);
+    }
+    return <String, dynamic>{};
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // DELETE
+  // ─────────────────────────────────────────────────────────
+
+  Future<void> deletePage(String pageId) async {
+    final page = await fetchPageById(pageId);
+
+    await _client.rpc('delete_page_and_reindex', params: {
+      'p_story_id': page.storyId,
+      'p_page_no': page.pageNo,
+    });
+
+    if (page.thumbnail != null && page.thumbnail!.isNotEmpty) {
+      await deleteThumbnail(page.thumbnail!);
+    }
   }
 }

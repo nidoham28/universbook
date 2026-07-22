@@ -2,14 +2,14 @@
 //
 // Creates a new row in the `stories` table for the currently authenticated
 // user. Client-supplied data is limited to the fields an author is allowed
-// to set (title, thumbnail, category, tags, page count, paid/cost, status);
+// to set (title, thumbnail, category, tags, paid/cost, status);
 // everything else — id, creator, timestamps, banned, verified, counts,
-// rating fields, search_queue, related — is computed server-side using the
-// service-role client so it can never be spoofed from the client payload.
+// rating fields, page_count, search_queue, related — is computed
+// server-side using the service-role client so it can never be spoofed
+// from the client payload.
 //
 // Deploy with: supabase functions deploy create-story
 
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -18,6 +18,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const ALLOWED_STATUSES = new Set(["draft", "private", "public"]);
 const MAX_TAGS = 10;
+const MAX_TITLE_LENGTH = 200;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,7 +26,14 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-serve(async (req) => {
+function json(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -66,13 +74,13 @@ serve(async (req) => {
   const isPaid = body.isPaid === true;
   const costRaw = body.cost;
   const cost = typeof costRaw === "number" ? costRaw : Number(costRaw ?? 0);
-  const pageCount = typeof body.pageCount === "number" && body.pageCount >= 0
-    ? Math.floor(body.pageCount)
-    : 0;
   const statusRaw = typeof body.status === "string" ? body.status : "draft";
   const status = ALLOWED_STATUSES.has(statusRaw) ? statusRaw : "draft";
 
   if (!title) return json({ error: "title is required" }, 400);
+  if (title.length > MAX_TITLE_LENGTH) {
+    return json({ error: `title must be ${MAX_TITLE_LENGTH} characters or fewer` }, 400);
+  }
   if (!thumbnail) return json({ error: "thumbnail is required" }, 400);
   if (!category) return json({ error: "category is required" }, 400);
   if (isPaid && (!Number.isFinite(cost) || cost <= 0)) {
@@ -90,7 +98,10 @@ serve(async (req) => {
     updated_at: now,
     title,
     thumbnail,
-    page_count: pageCount,
+    // A brand-new story has no pages yet. page_count is derived from the
+    // `pages` table exclusively via upsert-page's append_page() — never
+    // client-supplied, or the two can drift and corrupt page numbering.
+    page_count: 0,
     status,
     banned: false,
     views_count: 0,
@@ -120,10 +131,3 @@ serve(async (req) => {
 
   return json({ story: data }, 201);
 });
-
-function json(payload: unknown, status = 200): Response {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}

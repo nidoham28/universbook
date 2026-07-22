@@ -77,7 +77,7 @@ final appRouter = GoRouter(
         final pageIndex =
         pageIndexParam != null ? int.tryParse(pageIndexParam) : null;
         // EditPageScreen with no repo arg → internally uses PageRepository()
-        return EditPageScreen(storyId: storyId, pageIndex: pageIndex);
+        return EditPageScreen(storyId: storyId, pageNo: pageIndex);
       },
     ),
   ],

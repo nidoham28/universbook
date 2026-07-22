@@ -12,8 +12,9 @@ class StoryRepository {
 
   final SupabaseClient _client;
 
-  /// Storage bucket that holds story thumbnails. Create this bucket in the
-  /// Supabase dashboard (or via migration) and make it public for reads.
+  /// Storage bucket that holds story thumbnails. Created (public, with
+  /// per-user-folder write policies) by the storage section at the end of
+  /// stories.sql — run that migration before calling [uploadThumbnail].
   static const String _thumbnailBucket = 'story-thumbnails';
 
   /// Uploads a picked image's raw bytes to Storage and returns its public
@@ -49,7 +50,6 @@ class StoryRepository {
     required String category,
     required bool isPaid,
     double? cost,
-    int pageCount = 0,
     List<String> tags = const [],
     String status = 'draft',
   }) async {
@@ -61,14 +61,13 @@ class StoryRepository {
         'category': category,
         'isPaid': isPaid,
         if (isPaid && cost != null) 'cost': cost,
-        'pageCount': pageCount,
         'tags': tags,
         'status': status,
       },
     );
 
     final status_ = response.status;
-    if (status_ == null || status_ < 200 || status_ >= 300) {
+    if (status_ < 200 || status_ >= 300) {
       final data = response.data;
       final message = data is Map && data['error'] != null
           ? data['error'].toString()

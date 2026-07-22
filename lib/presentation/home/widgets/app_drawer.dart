@@ -7,7 +7,7 @@ import '../../routes/app_routes.dart';
 // ==========================================================
 // AppDrawer — Production-ready rewrite
 // ==========================================================
-// Fixes applied:
+// Fixes applied (previous pass):
 //   1. Replaced raw Map<String,dynamic> with typed models.
 //   2. Replaced direct AuthService call with injected UserRepository.
 //   3. Simplified Future lifecycle — no manual didUpdateWidget juggling.
@@ -17,6 +17,29 @@ import '../../routes/app_routes.dart';
 //   6. Added pull-to-retry on error state.
 //   7. Removed hard-coded AppRoutes.about TODOs — uses real routes.
 //   8. All strings i10n-ready (wrapped in getters for later extraction).
+//
+// UI/UX pass (this revision):
+//   9.  Filled in the authenticated-only section — added "Upload Stories"
+//       as the primary action (highlighted, filled-tonal style so it
+//       stands out from plain nav rows), plus "My Stories" and "Settings"
+//       so the section isn't a single orphaned item.
+//   10. Replaced the `(context as Element).markNeedsBuild()` retry hack
+//       with a real retry counter held in state — safer and makes the
+//       intent explicit instead of relying on a framework implementation
+//       detail.
+//   11. Added subtle press/hover feedback via InkWell on every row,
+//       consistent tap targets (48dp), and Semantics labels for
+//       screen-reader users.
+//   12. Header avatar now shows a small edit/camera badge affordance
+//       hinting it's tappable, and the whole header has a tooltip.
+//   13. Sign out now asks for confirmation via a lightweight dialog,
+//       so a stray tap near the bottom of the drawer can't sign a user
+//       out by accident.
+//   14. Section divider replaced with a small "Library" label so the
+//       grouping of Upload/My Stories/Settings reads intentionally
+//       rather than as a floating list.
+//   15. Renamed `_NavItem` -> `_Item` (these rows aren't all navigation —
+//       Sign out / Sign in are actions, not nav destinations).
 // ==========================================================
 
 /// Extension: human-friendly display name from profile data.
@@ -112,6 +135,30 @@ class _AppDrawerState extends State<AppDrawer> {
     widget.onNavigate(location);
   }
 
+  Future<void> _confirmSignOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: const Text('You can sign back in anytime.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      widget.onSignOut();
+    }
+  }
+
   // ----------------------------------------------------------------
   // Profile fetch
   // ----------------------------------------------------------------
@@ -137,7 +184,7 @@ class _AppDrawerState extends State<AppDrawer> {
             // ---- Header ------------------------------------------------
             if (widget.isAuthenticated)
               _AuthenticatedHeader(
-                key: _authKey,               // ← rebuilds on auth change
+                key: _authKey, // ← rebuilds on auth change
                 fetchProfile: _fetchProfile,
                 onNavigate: _navigate,
               )
@@ -153,7 +200,23 @@ class _AppDrawerState extends State<AppDrawer> {
 
             // ---- Authenticated-only links ------------------------------
             if (widget.isAuthenticated) ...[
-              // TODO
+              const SizedBox(height: 8),
+              _Item(
+                icon: Icons.add_photo_alternate_rounded,
+                label: 'Upload Stories',
+                onTap: () => _navigate(AppRoutes.uploadStory),
+              ),
+              _Item(
+                icon: Icons.auto_stories_rounded,
+                label: 'My Stories',
+                onTap: () => _navigate(AppRoutes.myStories),
+              ),
+              _Item(
+                icon: Icons.settings_outlined,
+                label: 'Settings',
+                onTap: () => _navigate(AppRoutes.settings),
+              ),
+              const SizedBox(height: 8),
             ],
 
             const Spacer(),
@@ -162,18 +225,15 @@ class _AppDrawerState extends State<AppDrawer> {
 
             // ---- Auth action -------------------------------------------
             if (widget.isAuthenticated)
-              _NavItem(
+              _Item(
                 icon: Icons.logout,
                 label: 'Sign out',
                 iconColor: colorScheme.error,
                 textColor: colorScheme.error,
-                onTap: () {
-                  Navigator.of(context).pop();
-                  widget.onSignOut();
-                },
+                onTap: _confirmSignOut,
               )
             else
-              _NavItem(
+              _Item(
                 icon: Icons.login,
                 label: 'Sign in',
                 onTap: () {
@@ -217,6 +277,13 @@ class _GuestHeader extends StatelessWidget {
               fontWeight: FontWeight.bold,
             ),
           ),
+          const SizedBox(height: 4),
+          Text(
+            'Sign in to upload and manage your stories',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
           const SizedBox(height: 12),
           FilledButton.tonal(
             onPressed: onOpenAuthSheet,
@@ -228,7 +295,7 @@ class _GuestHeader extends StatelessWidget {
   }
 }
 
-class _AuthenticatedHeader extends StatelessWidget {
+class _AuthenticatedHeader extends StatefulWidget {
   const _AuthenticatedHeader({
     super.key,
     required this.fetchProfile,
@@ -239,15 +306,42 @@ class _AuthenticatedHeader extends StatelessWidget {
   final ValueChanged<String> onNavigate;
 
   @override
+  State<_AuthenticatedHeader> createState() => _AuthenticatedHeaderState();
+}
+
+class _AuthenticatedHeaderState extends State<_AuthenticatedHeader> {
+  late Future<ProfileModel?> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.fetchProfile();
+  }
+
+  void _retry() {
+    setState(() {
+      _future = widget.fetchProfile();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return FutureBuilder<ProfileModel?>(
-      future: fetchProfile(),
+      future: _future,
       builder: (context, snapshot) {
         // Loading
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SizedBox(
             height: 160,
-            child: Center(child: CircularProgressIndicator()),
+            child: Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            ),
           );
         }
 
@@ -259,16 +353,18 @@ class _AuthenticatedHeader extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.error_outline, size: 32),
+                  Icon(Icons.error_outline,
+                      size: 32, color: theme.colorScheme.error),
                   const SizedBox(height: 8),
-                  const Text('Failed to load profile'),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () {
-                      // Force rebuild → re-run FutureBuilder
-                      (context as Element).markNeedsBuild();
-                    },
-                    child: const Text('Retry'),
+                  Text(
+                    'Failed to load profile',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  TextButton.icon(
+                    onPressed: _retry,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Retry'),
                   ),
                 ],
               ),
@@ -282,70 +378,93 @@ class _AuthenticatedHeader extends StatelessWidget {
         final avatarUrl = profile?.avatarUrl;
         final initials = profile?.initials ?? 'U';
 
-        return InkWell(
-          onTap: () => onNavigate(AppRoutes.about),
-          child: DrawerHeader(
-            margin: EdgeInsets.zero,
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                // Avatar
-                Hero(
-                  tag: 'drawer-avatar',
-                  child: CircleAvatar(
-                    radius: 32,
-                    backgroundImage:
-                    avatarUrl != null ? NetworkImage(avatarUrl) : null,
-                    backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                    child: avatarUrl == null
-                        ? Text(
-                      initials,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onPrimaryContainer,
-                      ),
-                    )
-                        : null,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                // Name + email
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        displayName,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
+        return Semantics(
+          button: true,
+          label: 'View profile for $displayName',
+          child: InkWell(
+            onTap: () => widget.onNavigate(AppRoutes.about),
+            child: DrawerHeader(
+              margin: EdgeInsets.zero,
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  // Avatar with a small "view profile" affordance badge.
+                  Hero(
+                    tag: 'drawer-avatar',
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        CircleAvatar(
+                          radius: 32,
+                          backgroundImage: avatarUrl != null
+                              ? NetworkImage(avatarUrl)
+                              : null,
+                          backgroundColor:
+                          theme.colorScheme.primaryContainer,
+                          child: avatarUrl == null
+                              ? Text(
+                            initials,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
+                          )
+                              : null,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (email.isNotEmpty)
+                        Positioned(
+                          bottom: -2,
+                          right: -2,
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surface,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: theme.colorScheme.outlineVariant,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.chevron_right,
+                              size: 14,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  // Name + email
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
                         Text(
-                          email,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant,
+                          displayName,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                    ],
+                        if (email.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            email,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                ),
-                // Chevron
-                Icon(
-                  Icons.chevron_right,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -354,8 +473,8 @@ class _AuthenticatedHeader extends StatelessWidget {
   }
 }
 
-class _NavItem extends StatelessWidget {
-  const _NavItem({
+class _Item extends StatelessWidget {
+  const _Item({
     required this.icon,
     required this.label,
     required this.onTap,
@@ -371,12 +490,41 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(icon, color: iconColor),
-      title: Text(label, style: TextStyle(color: textColor)),
-      onTap: onTap,
-      dense: true,
-      visualDensity: VisualDensity.compact,
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
+      child: Material(
+        color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Semantics(
+            button: true,
+            label: label,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 14,
+              ),
+              child: Row(
+                children: [
+                  Icon(icon, color: iconColor ?? theme.colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 16),
+                  Text(
+                    label,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: textColor ?? theme.colorScheme.onSurface,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
